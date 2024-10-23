@@ -11,8 +11,10 @@ class SkillEmbeddingAndPrior(nn.Module):
   def __init__(self, input_size, hidden_size=128, latent_dim=10, batch_size=16):
     super(SkillEmbeddingAndPrior, self).__init__()
 
-    # TODO: how can we do sequential action input to the encoder LSTM?
-    # TODO: how can we output sequential action from the decoder LSTM?
+    # TODO: how can we do sequential action input to the encoder LSTM? i think lstm handles that 
+    # TODO: how can we output sequential action from the decoder LSTM? i think lstm handles that 
+    # TODO: rewrite LSTMs and Sequential b/c you can't do sequential w/ LSTM since LSTM output is weird
+    # TODO: add skill priors DNN and function 
     self.encoder = nn.Sequential(
       nn.LSTM(input_size=input_size,
               hidden_size=hidden_size, 
