@@ -1,5 +1,5 @@
 import copy
-
+import os
 import numpy as np
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.obs_utils as ObsUtils
@@ -30,10 +30,10 @@ def get_dataset(
 
     if initialize_obs_utils:
         ObsUtils.initialize_obs_utils_with_obs_specs({"obs": obs_modality})
-
     all_obs_keys = []
     for modality_name, modality_list in obs_modality.items():
         all_obs_keys += modality_list
+
     shape_meta = FileUtils.get_shape_metadata_from_dataset(
         dataset_path=dataset_path, all_obs_keys=all_obs_keys, verbose=False
     )
