@@ -71,7 +71,7 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 # torch.cuda.empty_cache()
 
 input_dim = num_actions
-prior_dim = 21 + 1024 # todo 
+prior_dim = 21 + 1024 
 model = SkillEmbeddingAndPrior(input_dim, prior_dim).to(device)
 reconstruction_loss_fn = nn.MSELoss(reduction='mean')
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
