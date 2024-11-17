@@ -1,3 +1,12 @@
+"""
+this is the training loop
+
+todos
+- turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
+- ask Dr. A to review our code on the cnn; should it get trained in the first place?
+- how can we make it a variable sequence length? right now it's fixed at 50, but the libero datasets seem to have sequence lenghts of 100+
+"""
+
 from Models.SkillEmbeddingPrior import SkillEmbeddingAndPrior
 from Models.SkillPriorNet import SkillPriorNet
 from torch.utils.data import DataLoader
@@ -6,13 +15,31 @@ import torch
 from libero.lifelong.datasets import get_dataset
 from torch.distributions import Normal
 from torch.distributions.kl import kl_divergence
+from torchvision.models import resnet18
+from torchvision.transforms import Compose, Normalize, ToTensor, Resize
+from torchvision.models import ResNet18_Weights
 
+# Device configuration
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Define transformations for image data
+image_transforms = Compose([
+    # ToTensor(),  # Convert image to tensor (C, H, W)
+    Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),  # Normalize to [-1, 1]
+    Resize((128, 128), antialias=True),  # Resize images to a fixed size
+])
+
+# Load pre-trained CNN for feature extraction
+cnn_model = resnet18(weights=ResNet18_Weights.DEFAULT)
+cnn_model.fc = nn.Identity()  # Remove classification layer to use as feature extractor
+cnn_model = cnn_model.to(device)
+cnn_model.eval()  # Set to evaluation mode
 
 # using vae model defined above...
 dataset_path = 'libero/datasets/libero_goal/open_the_middle_drawer_of_the_cabinet_demo.hdf5' 
 obs_modality = {
-    'low_dim': ['agentview_rgb', 'ee_ori', 'ee_pos', 'ee_states', 'eye_in_hand_rgb', 'gripper_states', 'joint_states']
+    'low_dim': ['ee_ori', 'ee_pos', 'ee_states', 'gripper_states', 'joint_states'],
+    'rgb': ['agentview_rgb', 'eye_in_hand_rgb'],  # High-dimensional modalities
 }
 seq_len = 50 # todo: might have to alter this 
 frame_stack = 1
@@ -21,22 +48,16 @@ num_actions = 7
 latent_dim = 10
 num_epochs = 100 # can modify as needed
 
-# Device configuration
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# breakpoint()
-
 # Get the dataset and DataLoader
 dataset, shape_meta = get_dataset(
     dataset_path=dataset_path,
-    obs_modality=obs_modality, # what the heck is obs_modailty doing in this get_dataset function
+    obs_modality=obs_modality, # Includes both low and high-dimensional data
     initialize_obs_utils=True,
     seq_len=seq_len,
     frame_stack=frame_stack,
     filter_key=None,
     hdf5_cache_mode="low_dim",
 )
-# breakpoint()
-# print(dataset)
 
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -50,7 +71,8 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 # torch.cuda.empty_cache()
 
 input_dim = num_actions
-model = SkillEmbeddingAndPrior(input_dim).to(device)
+prior_dim = 21 + 1024 # todo 
+model = SkillEmbeddingAndPrior(input_dim, prior_dim).to(device)
 reconstruction_loss_fn = nn.MSELoss(reduction='mean')
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
@@ -65,19 +87,51 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         # print(data['actions'].shape)
         # print(data["obs"]["ee_ori"].shape)
-        # Assuming 'actions' is the key for input data
-        x = data['actions']  # Shape: [batch_size, seq_len, num_actions]
-        
-        # breakpoint()
-        x = x.to(device).float()
 
-        reconstructed_x, mean, logvar, prior_mean, prior_logvar = model(x)
+        # Extract low-dimensional data
+        low_dim_data = torch.cat([
+            data["obs"]["ee_ori"], 
+            data["obs"]["ee_pos"], 
+            data["obs"]["ee_states"], 
+            data["obs"]["gripper_states"], 
+            data["obs"]["joint_states"]
+        ], dim=-1).to(device)
+
+        # Extract and process high-dimensional image data
+        rgb_features = []
+        for img_key in obs_modality['rgb']:
+            img_seq = data["obs"][img_key]  # Shape: [batch_size, seq_len, H, W, C]
+            batch_features = []
+            for img_batch in img_seq:  # Process each batch
+                batch_img_features = []
+                for img in img_batch:  # Process each image
+                    img_tensor = image_transforms(img).unsqueeze(0).to(device)  # Transform image
+                    with torch.no_grad():
+                        img_features = cnn_model(img_tensor).squeeze(0)  # Extract CNN features
+                    batch_img_features.append(img_features)
+                batch_features.append(torch.stack(batch_img_features))
+            rgb_features.append(torch.stack(batch_features))  # Collect features for the key
+
+        # Concatenate image features along the feature dimension
+        rgb_features = torch.cat(rgb_features, dim=-1).to(device)
+
+        # Combine low-dimensional data and image features
+        first_state = low_dim_data[:, 0, :]  # Shape: [batch_size, total_low_dim_features]
+        first_rgb_features = rgb_features[:, 0, :]  # Shape: [batch_size, cnn_feature_dim]
+        states_input = torch.cat([first_state, first_rgb_features], dim=-1)
+
+        actions_input = data['actions']  # Shape: [batch_size, seq_len, num_actions]
+        
+        actions_input = actions_input.to(device).float()
+
+        # breakpoint()
+        reconstructed_x, mean, logvar, prior_mean, prior_logvar = model(actions_input, states_input)
         # Check prior_logvar for NaNs or Infs
         if torch.isnan(prior_logvar).any():
             print('prior_logvar contains NaNs')
         if torch.isinf(prior_logvar).any():
             print('prior_logvar contains Infs')
-        x_flat = x.view(x.size(0), -1)
+        x_flat = actions_input.view(actions_input.size(0), -1)
         reconstructed_x_flat = reconstructed_x.view(reconstructed_x.size(0), -1) 
         reconstruction_loss = reconstruction_loss_fn(reconstructed_x_flat, x_flat)
         reconstruction_loss_epoch += reconstruction_loss.item()
@@ -102,6 +156,8 @@ for epoch in range(num_epochs):
         optimizer.step()
 
         total_loss_epoch += total_loss.item()
+
+        print(f"total_loss: {total_loss}, batch_idx: {batch_idx}")
 
     avg_loss_epoch = total_loss_epoch / len(dataloader)
     avg_loss_reconstruction = reconstruction_loss_epoch / len(dataloader)

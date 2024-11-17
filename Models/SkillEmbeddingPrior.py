@@ -4,7 +4,7 @@ from Models.SkillPriorNet import SkillPriorNet
 
 
 class SkillEmbeddingAndPrior(nn.Module):
-  def __init__(self, input_size, hidden_size=128, latent_dim=10, batch_size=16):
+  def __init__(self, input_size, prior_input_size, hidden_size=128, latent_dim=10, batch_size=16):
     super(SkillEmbeddingAndPrior, self).__init__()
 
     self.input_size = input_size
@@ -28,7 +28,7 @@ class SkillEmbeddingAndPrior(nn.Module):
     self.decoder_lstm = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=1, batch_first=True)
     self.fc_output = nn.Linear(hidden_size, input_size)  # Output per step should match the input size (7 in this case)
 
-    self.skill_prior = SkillPriorNet(input_size)
+    self.skill_prior = SkillPriorNet(prior_input_size)
 
   def encode(self, x):
     hidden_output = self.encoder_input_layer(x)
@@ -59,9 +59,10 @@ class SkillEmbeddingAndPrior(nn.Module):
       reconstructed_x = output_final.view(-1, self.sequence_length, self.input_size)  # Shape: [batch_size, sequence_length, input_size]
       return reconstructed_x
 
-  def forward(self, x):
+  def forward(self, x, state):
       mean, logvar = self.encode(x)
       z = self.reparameterize(mean, logvar)
       reconstructed_x = self.decode(z)
-      prior_mean, prior_logvar = self.skill_prior(x) # x = actions...need to pass in states instead~\
+      # breakpoint()
+      prior_mean, prior_logvar = self.skill_prior(state) # x = actions...need to pass in states instead~\
       return reconstructed_x, mean, logvar, prior_mean, prior_logvar
