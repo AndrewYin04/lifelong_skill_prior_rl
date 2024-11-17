@@ -63,5 +63,5 @@ class SkillEmbeddingAndPrior(nn.Module):
       mean, logvar = self.encode(x)
       z = self.reparameterize(mean, logvar)
       reconstructed_x = self.decode(z)
-      prior_mean, prior_logvar = self.skill_prior(x) # x = actions...need to pass in states instead
+      prior_mean, prior_logvar = self.skill_prior(x) # x = actions...need to pass in states instead~\
       return reconstructed_x, mean, logvar, prior_mean, prior_logvar
