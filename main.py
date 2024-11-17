@@ -1,10 +1,12 @@
 """
 this is the training loop
 
-todos
+TODO
 - turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
 - ask Dr. A to review our code on the cnn; should it get trained in the first place?
 - how can we make it a variable sequence length? right now it's fixed at 50, but the libero datasets seem to have sequence lenghts of 100+
+- i'm p sure the prior_mean, prior_logvar, mean, and logvar are not used correctly when caluclating losses for p and q; so i changed it to what i think is right.
+- for some reason, the losses are increasing for prior loss and encoder kl loss
 """
 
 from Models.SkillEmbeddingPrior import SkillEmbeddingAndPrior
@@ -18,6 +20,10 @@ from torch.distributions.kl import kl_divergence
 from torchvision.models import resnet18
 from torchvision.transforms import Compose, Normalize, ToTensor, Resize
 from torchvision.models import ResNet18_Weights
+import os
+
+pid = os.getpid()
+print(f"My process PID: {pid}")
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -41,7 +47,7 @@ obs_modality = {
     'low_dim': ['ee_ori', 'ee_pos', 'ee_states', 'gripper_states', 'joint_states'],
     'rgb': ['agentview_rgb', 'eye_in_hand_rgb'],  # High-dimensional modalities
 }
-seq_len = 50 # todo: might have to alter this 
+seq_len = 50 # TODO: might have to alter this 
 frame_stack = 1
 batch_size = 16
 num_actions = 7
@@ -59,7 +65,7 @@ dataset, shape_meta = get_dataset(
     hdf5_cache_mode="low_dim",
 )
 
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
 
 # Initialize the model, loss function, and optimizer
 # input_dim = seq_len * num_actions  # Ask nicholas what actually is input_dim lol
@@ -145,7 +151,7 @@ for epoch in range(num_epochs):
         logvar_detached = logvar.detach()
 
         # Skill prior KL divergence
-        p_z_prior = Normal(mean, torch.exp(0.5 * logvar))
+        p_z_prior = Normal(prior_mean, torch.exp(0.5 * prior_logvar)) # TODO: is there a reason why it's not prior_mean and prior_logvar?
         q_z_detached = Normal(mean_detached, torch.exp(0.5 * logvar_detached))
         skill_prior_kl_loss = kl_divergence(q_z_detached, p_z_prior).mean()
         prior_loss += skill_prior_kl_loss.item()
@@ -157,7 +163,15 @@ for epoch in range(num_epochs):
 
         total_loss_epoch += total_loss.item()
 
-        print(f"total_loss: {total_loss}, batch_idx: {batch_idx}")
+        # print(f"total_loss: {total_loss}, batch_idx: {batch_idx}")
+        # print(f"prior_loss: {skill_prior_kl_loss}, batch_idx: {batch_idx}")
+        # print(f"encoder_kl_loss: {encoder_kl_loss}, batch_idx: {batch_idx}")
+        # print(f"reconstruction_loss: {reconstruction_loss}, batch_idx: {batch_idx}")
+        print(f"Batch [{batch_idx + 1}], Total Loss: {total_loss:.4f}")
+        print(f"Batch [{batch_idx + 1}], Prior Loss: {skill_prior_kl_loss:.4f}")
+        print(f"Batch [{batch_idx + 1}], Encoder KL Loss: {encoder_kl_loss:.4f}")
+        print(f"Batch [{batch_idx + 1}], Reconstruction Loss: {reconstruction_loss:.4f}")
+
 
     avg_loss_epoch = total_loss_epoch / len(dataloader)
     avg_loss_reconstruction = reconstruction_loss_epoch / len(dataloader)
