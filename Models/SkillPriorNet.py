@@ -21,7 +21,7 @@ class SkillPriorNet(nn.Module):
 
     def forward(self, x):
         # Pass through the 6 layers with ReLU activation
-        # x = x[:,0]
+        #x = x[:,0]
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
