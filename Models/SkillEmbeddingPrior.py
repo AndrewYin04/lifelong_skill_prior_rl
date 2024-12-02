@@ -59,11 +59,11 @@ class SkillEmbeddingAndPrior(nn.Module):
       reconstructed_x = output_final.view(-1, self.sequence_length, self.input_size)  # Shape: [batch_size, sequence_length, input_size]
       return reconstructed_x
       
-  def forward(self, x, states):
+  def forward(self, x, agentview_rgb, eye_in_hand_rgb, low_dim_features):
     mean, logvar = self.encode(x)
     z = self.reparameterize(mean, logvar)
     reconstructed_x = self.decode(z)
-    prior_mean, prior_logvar = self.skill_prior(states) # x = actions...need to pass in states instead
+    prior_mean, prior_logvar = self.skill_prior(agentview_rgb, eye_in_hand_rgb, low_dim_features)
     return reconstructed_x, mean, logvar, prior_mean, prior_logvar
 
 #   def forward(self, x):

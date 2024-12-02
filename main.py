@@ -2,13 +2,9 @@
 this is the training loop
 
 TODO
-- turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
-- ask Dr. A to review our code on the cnn; should it get trained in the first place?
-- how can we make it a variable sequence length? right now it's fixed at 50, but the libero datasets seem to have sequence lenghts of 100+
-- i'm p sure the prior_mean, prior_logvar, mean, and logvar are not used correctly when caluclating losses for p and q; so i changed it to what i think is right.
-- for some reason, the losses are increasing for prior loss and encoder kl loss
-- Ask how to deal with nan problem (it diminishes if we make beta very small...but that's still plain wrong)...probably cuz regularization loss becomes too big right?
-- we changed the subtraction to an addition and the nan problem disappeared (loss remained consistent...oscillating)
+    - turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
+- ask Dr. A to review our code cuz loss iss decreasing but very slightly (for some reason alr starts off super low...)
+- ask Dr. A about RL stuff (what to go about etc)
 """
 
 from Models.SkillEmbeddingPrior import SkillEmbeddingAndPrior
@@ -19,6 +15,9 @@ import torch
 from libero.lifelong.datasets import get_dataset
 from torch.distributions import Normal
 from torch.distributions.kl import kl_divergence
+from colorama import Fore, Style
+import matplotlib.pyplot as plt
+from torchvision.transforms import Compose, Normalize, Resize
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -27,13 +26,14 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 dataset_path = 'libero/datasets/libero_goal/open_the_middle_drawer_of_the_cabinet_demo.hdf5'
 obs_modality = {
     'low_dim': ['ee_ori', 'ee_pos', 'ee_states', 'gripper_states', 'joint_states'],
+    'rgb': ['agentview_rgb', 'eye_in_hand_rgb'],  # High-dimensional modalities
 }
-seq_len = 50  # You might have to alter this
+seq_len = 50  # You might have to alter this+ 
 frame_stack = 1
 batch_size = 16
 num_actions = 7
 latent_dim = 10
-num_epochs = 100  # Modify as needed
+num_epochs = 100 # Modify as needed
 
 # Get the dataset and DataLoader
 dataset, shape_meta = get_dataset(
@@ -54,6 +54,14 @@ prior_dim = 21  # Adjusted since we no longer have image features
 model = SkillEmbeddingAndPrior(input_dim, prior_dim).to(device)
 reconstruction_loss_fn = nn.MSELoss(reduction='mean')
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+prior_loss_array = []
+total_loss_array = []
+
+image_transforms = Compose([
+    Resize((128, 128), antialias=True),  # Resize to match model input
+    Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
+])
 
 # Training loop
 for epoch in range(num_epochs):
@@ -79,11 +87,18 @@ for epoch in range(num_epochs):
         first_state = low_dim_data[:, 0, :]  # Shape: [batch_size, total_low_dim_features]
         states_input = first_state
 
+        rgb_image = []
+        for img_key in obs_modality['rgb']:
+            img_seq = data["obs"][img_key]  # Shape: [batch_size, seq_len, C, H, W]
+            first_frame = img_seq[:, 0]  # Take the first frame, shape: [batch_size, C, H, W]
+            # image = first_frame.permute(0, 3, 1, 2)  # Convert to [batch_size, C, H, W]
+            rgb_image.append(image_transforms(first_frame).to(device).float())
+
         actions_input = data['actions']  # Shape: [batch_size, seq_len, num_actions]
         actions_input = actions_input.to(device).float()
 
         # Pass data through the model
-        reconstructed_x, mean, logvar, prior_mean, prior_logvar = model(actions_input, states_input)
+        reconstructed_x, mean, logvar, prior_mean, prior_logvar = model(actions_input, rgb_image[0], rgb_image[1], states_input) # agentview_rgb, eye_in_hand_rgb, low_dim_features
 
         # Compute reconstruction loss
         x_flat = actions_input.view(actions_input.size(0), -1)
@@ -108,7 +123,7 @@ for epoch in range(num_epochs):
         prior_loss_epoch += skill_prior_kl_loss.item()
 
         # Total loss
-        total_loss = reconstruction_loss - 0.001 * encoder_kl_loss + skill_prior_kl_loss
+        total_loss = reconstruction_loss + 0.01 * encoder_kl_loss + skill_prior_kl_loss
         total_loss.backward()
         optimizer.step()
         total_loss_epoch += total_loss.item()
@@ -118,7 +133,32 @@ for epoch in range(num_epochs):
     avg_regularization_loss = regularization_loss_epoch / len(dataloader)
     avg_prior_loss = prior_loss_epoch / len(dataloader)
 
-    print(f"Epoch [{epoch + 1}/{num_epochs}], Average Total Loss: {avg_loss_epoch:.4f}")
-    print(f"Epoch [{epoch + 1}/{num_epochs}], Average Reconstruction Loss: {avg_reconstruction_loss:.4f}")
-    print(f"Epoch [{epoch + 1}/{num_epochs}], Average Regularization Loss: {avg_regularization_loss:.4f}")
-    print(f"Epoch [{epoch + 1}/{num_epochs}], Average Prior Loss: {avg_prior_loss:.4f}")
+    total_loss_array.append(avg_loss_epoch)
+    prior_loss_array.append(avg_prior_loss)
+
+
+    # print(f"Epoch [{epoch + 1}/{num_epochs}], Average Total Loss: {avg_loss_epoch:.4f}")
+    # print(f"Epoch [{epoch + 1}/{num_epochs}], Average Reconstruction Loss: {avg_reconstruction_loss:.4f}")
+    # print(f"Epoch [{epoch + 1}/{num_epochs}], Average Regularization Loss: {avg_regularization_loss:.4f}")
+    # print(f"Epoch [{epoch + 1}/{num_epochs}], Average Prior Loss: {avg_prior_loss:.4f}")
+    print(f"{Fore.YELLOW}Epoch [{epoch + 1}/{num_epochs}], Average Total Loss: {avg_loss_epoch:.4f}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}Epoch [{epoch + 1}/{num_epochs}], Average Reconstruction Loss: {avg_reconstruction_loss:.4f}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Epoch [{epoch + 1}/{num_epochs}], Average Regularization Loss: {avg_regularization_loss:.4f}{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}Epoch [{epoch + 1}/{num_epochs}], Average Prior Loss: {avg_prior_loss:.4f}{Style.RESET_ALL}")
+
+
+# Plotting
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, 101), total_loss_array, label='Total Loss', marker='o')
+plt.plot(range(1, 101), prior_loss_array, label='Prior Loss', marker='x')
+
+# Labels and Title
+plt.xlabel('Epoch', fontsize=12)
+plt.ylabel('Loss Value', fontsize=12)
+plt.title('Loss Over Epochs', fontsize=14)
+plt.legend(fontsize=10)
+plt.grid(True)
+plt.show()
+
+# Save the plot as an image file
+plt.savefig('loss_plot.png')  # Save as PNG (or 'loss_plot.pdf' for PDF)
