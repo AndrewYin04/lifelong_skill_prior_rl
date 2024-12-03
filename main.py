@@ -2,9 +2,11 @@
 this is the training loop
 
 TODO
-    - turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
-- ask Dr. A to review our code cuz loss iss decreasing but very slightly (for some reason alr starts off super low...)
-- ask Dr. A about RL stuff (what to go about etc)
+- [-] turn the cnn into something inside the SkillPrior model, rather than in this training loop, and make sure that the cnn gets trained as well 
+- [-] ask Dr. A to review our code cuz loss iss decreasing but very slightly (for some reason alr starts off super low...)
+- [-] ask Dr. A about RL stuff (what to go about etc)
+
+- [ ] test the trained model with LIBERO environment (prolly look at libero/lifelong/metric.py)
 """
 
 from Models.SkillEmbeddingPrior import SkillEmbeddingAndPrior
