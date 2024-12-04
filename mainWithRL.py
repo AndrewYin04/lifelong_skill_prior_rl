@@ -1,6 +1,11 @@
 """
 TODO
     - integrate RL here
+
+    problems
+    - don't know which observation key/modality to use (https://robosuite.ai/docs/modules/environments.html#observations)
+    - don't know how to flatten the observations and the dimensions of the observation
+    - 
 """
 
 from Models.PolicyNetwork import PolicyNetwork
@@ -18,17 +23,136 @@ from colorama import Fore, Style
 import matplotlib.pyplot as plt
 import numpy as np
 import gym
+from libero.libero import benchmark
+from libero.libero.envs import OffScreenRenderEnv
+import os
+from libero_env import make_env, CFG
+
+
+from libero.libero import benchmark, get_libero_path
+from libero.libero.envs import OffScreenRenderEnv
+
+use_arnav_code = True
+if use_arnav_code:
+    env = make_env(CFG("libero_object", 0, "rgb"))
+else:
+    benchmark_dict = benchmark.get_benchmark_dict()
+    task_suite_name = "libero_10" # can also choose libero_spatial, libero_object, etc.
+    task_suite = benchmark_dict[task_suite_name]()
+
+    # retrieve a specific task
+    task_id = 0
+    task = task_suite.get_task(task_id)
+    task_name = task.name
+    task_description = task.language
+    task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+    print(task_bddl_file)
+    print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
+        f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
+
+    # step over the environment
+    env_args = {
+        "bddl_file_name": task_bddl_file,
+        "camera_heights": 128,
+        "camera_widths": 128
+    }
+    env = OffScreenRenderEnv(**env_args)
+    env.seed(0)
+    env.reset()
+    init_states = task_suite.get_task_init_states(task_id) # for benchmarking purpose, we fix the a set of initial states
+    init_state_id = 0
+    env.set_init_state(init_states[init_state_id])
+    # print(init_states[0].shape);quit()
+    dummy_action = [0.] * 7
+
+"""
+doesnt work b/c observation() never gets called
+class FlattenObservation(gym.ObservationWrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.observation_space = spaces.flatten_space(env.env.observation_spec())
+        self.state_dim = len(self.observation_space)
+
+    def observation(self, observation):
+        # return spaces.flatten(self.env.env.observation_spec(), observation)
+        state_size = 0
+        state_dim = 0
+        state_col_arr = []
+        for entry in list(observation.values()):
+            # state_size += 1
+            try:
+                for entry2 in entry:
+                    try:
+                        for entry3 in entry2:
+                            state_size += 1
+                            state_col_arr.append(entry3)
+                    except:
+                        state_size += 1
+                        state_col_arr.append(entry2)
+            except:
+                state_size += 1
+                state_col_arr.append(entry)
+            # state_dim = state_size
+            # print(state_size)
+            # state_size = 0
+        state_dim = state_size
+        raise ''
+        print('START',np.array(state_col_arr),'END');quit()
+        return np.array(state_col_arr)
+"""
+# env.observation_space OrderedDict space
+# from gym.wrappers import FlattenObservation
+# env = FlattenObservation(env)
+# Box
+for step in range(10):
+    # obs OrderedDict
+    obs, reward, done, info = env.step(dummy_action)
+    # obs vector
+    # print(len(list(obs.values())));quit()
+
+breakpoint()
+state_dim = env.observation_space.shape[0]
+action_dim = list(env.env.action_spec)[0].shape[0]
+
+
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # env configuration for RL
-env = gym.make('LiberoDrawerOpen-v0')
-state_dim = env.observation_space.shape[0]
-action_dim = env.action_space.shape[0]
+# env = gym.make('FrozenLake-v1')
+# breakpoint()
+# print(env.env.observation_spec())
+# state_dim = env.env.observation_spec().shape[0]
+# print(env.sim.get_state().flatten().shape)
+# print(vars(env.sim))
+print(env.env.observation_spec())
+#uit()
+state_size = 0
+state_dim = 0
+for entry in list(env.env.observation_spec().values()):
+    # state_size += 1
+    try:
+        for entry2 in entry:
+            try:
+                for entry3 in entry2:
+                    state_size += 1
+            except:
+                state_size += 1
+    except:
+        state_size += 1
+    # state_dim = state_size
+    # print(state_size)
+    # state_size = 0
+
+state_dim = state_size
+# state_dim = env.env.observation_space.shape[0]
+action_dim = list(env.env.action_spec)[0].shape[0]
+print(state_dim)
+print(action_dim)
 
 # Using VAE model defined above...
-dataset_path = 'libero/datasets/libero_goal/open_the_middle_drawer_of_the_cabinet_demo.hdf5'
+dataset_path = 'libero/libero/bddl_files/libero_spatial/pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo.hdf5'
 obs_modality = {
     'low_dim': ['ee_ori', 'ee_pos', 'ee_states', 'gripper_states', 'joint_states'],
 }
@@ -54,7 +178,7 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_worker
 
 # Initialize the model, loss function, and optimizer
 input_dim = num_actions
-prior_dim = 21  # Adjusted since we no longer have image features
+prior_dim = 21  # Adjusted since we no longer have import libero_env # is this how to import a file?image features
 model = SkillEmbeddingAndPrior(input_dim, prior_dim).to(device)
 print("State dim: " + str(state_dim)) # should be 21 right?
 print("Action dim: " + str(action_dim)) # should be 7 right?
@@ -218,7 +342,7 @@ def execute_skill(z_t, state, env, H, model):
     return next_state, skill_reward, done
 
 replay_buffer = ReplayBuffer()
-num_iterations = 1000  # Define as needed
+num_iterations = 1000  # Define as neededimport libero_env # is this how to import a file?
 
 for iteration in range(num_iterations):
     state = env.reset()
